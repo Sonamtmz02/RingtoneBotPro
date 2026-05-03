@@ -30,7 +30,8 @@ bot = telebot.TeleBot(BOT_TOKEN)
 if not os.path.exists('downloads'):
     os.makedirs('downloads')
 
-@bot.message_handler(commands=['start', 'help'])
+# --- START COMMAND ---
+@bot.message_handler(commands=['start'])
 def send_welcome(message):
     welcome_text = (
         "🎵 Welcome to Ringtone Pro Bot! 🎵\n\n"
@@ -40,12 +41,29 @@ def send_welcome(message):
         "• High-Quality MP3 Audio\n"
         "• Super-fast processing\n"
         "• Direct Telegram Files (No ads or links)\n\n"
-        "🎧 How to use:\n"
-        "Simply type the song name below and hit send!\n"
-        "Example: Animal movie bgm"
+        "💡 Need assistance? Click /help"
     )
     bot.reply_to(message, welcome_text)
 
+# --- HELP COMMAND ---
+@bot.message_handler(commands=['help'])
+def send_help(message):
+    help_text = (
+        "🛠️ **Ringtone Pro Bot Help Center** 🛠️\n\n"
+        "**How to use me?**\n"
+        "1. Do not send YouTube links. Just type the name of the song.\n"
+        "2. Add words like 'BGM', 'instrumental', or 'flute' for better results.\n"
+        "   👉 *Example:* KGF emotional bgm\n"
+        "   👉 *Example:* Arijit Singh sad ringtone\n\n"
+        "**Why didn't I get my ringtone?**\n"
+        "• Sometimes YouTube blocks requests. Just wait 1 minute and try again.\n"
+        "• Check if the spelling is correct.\n\n"
+        "**Is this bot free?**\n"
+        "• Yes! 100% Free and NO ADS. Enjoy downloading!"
+    )
+    bot.reply_to(message, help_text, parse_mode='Markdown')
+
+# --- MAIN DOWNLOAD LOGIC ---
 @bot.message_handler(func=lambda message: True)
 def handle_ringtone_search(message):
     query = message.text
@@ -53,22 +71,22 @@ def handle_ringtone_search(message):
     
     bot.send_message(chat_id, "Searching... Please wait ⏳")
     
-    # ULTIMATE SAFE SETTINGS FOR RENDER & YOUTUBE
+    # MAGIC SETTINGS: Bypassing YouTube Server Blocks
     ydl_opts = {
         'format': 'bestaudio/best',
-        # Removed Title from name, using ID to prevent special character crashes
-        'outtmpl': f'downloads/{chat_id}_%(id)s.%(ext)s', 
+        'outtmpl': f'downloads/{chat_id}_%(id)s.%(ext)s',
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
             'preferredquality': '256',
         }],
-        # REMOVED ARIA2C - This was the villain causing YouTube to block us!
         'noplaylist': True,
         'quiet': True,
         'extract_audio': True,
-        'ignoreerrors': True, # If 1 video fails, it won't crash the bot, it will move to next
-        'max_downloads': 3 # Strictly limit to 3 to avoid timeouts
+        'max_downloads': 3,
+        'nocheckcertificate': True,
+        # Spoofing as an Android device to stop YouTube from blocking Render IP
+        'extractor_args': {'youtube': {'player_client': ['android', 'web']}}
     }
     
     search_query = f"ytsearch3:{query} ringtone short"
@@ -92,7 +110,7 @@ def handle_ringtone_search(message):
             
     except Exception as e:
         print(f"CRITICAL ERROR FOR CHAT {chat_id}: {e}")
-        bot.send_message(chat_id, "An error occurred. YouTube might be blocking the request. Try again in a minute.")
+        bot.send_message(chat_id, "⚠️ Network busy! YouTube is strictly checking requests right now. Please try again after 1-2 minutes.")
         
         # Cleanup broken files
         error_files = glob.glob(f'downloads/{chat_id}_*')
