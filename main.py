@@ -52,7 +52,7 @@ def handle_ringtone_search(message):
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
-            'preferredquality': '192',
+            'preferredquality': '256',
         }],
         'external_downloader': 'aria2c',
         'external_downloader_args': ['-x', '16', '-k', '1M'],
