@@ -19,7 +19,6 @@ def run_dummy_server():
     httpd = HTTPServer(server_address, DummyHandler)
     httpd.serve_forever()
 
-# Start the dummy server in a background thread
 server_thread = threading.Thread(target=run_dummy_server)
 server_thread.daemon = True
 server_thread.start()
@@ -34,8 +33,16 @@ if not os.path.exists('downloads'):
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
     welcome_text = (
-        "Welcome to Ringtone Pro Bot!\n\n"
-        "Just send me any song name, and I will instantly send you the top 3 MP3 ringtones."
+        "🎵 Welcome to Ringtone Pro Bot! 🎵\n\n"
+        "I am your personal high-speed ringtone provider. "
+        "Just send me the name of any song, movie BGM, or artist, and I will instantly fetch the Top 3 best quality MP3 ringtones for you.\n\n"
+        "⚡ Features:\n"
+        "• High-Quality MP3 Audio\n"
+        "• Super-fast processing\n"
+        "• Direct Telegram Files (No ads or links)\n\n"
+        "🎧 How to use:\n"
+        "Simply type the song name below and hit send!\n"
+        "Example: Animal movie bgm"
     )
     bot.reply_to(message, welcome_text)
 
@@ -44,8 +51,9 @@ def handle_ringtone_search(message):
     query = message.text
     chat_id = message.chat.id
     
-    bot.send_message(chat_id, "processing... Please wait.")
+    bot.send_message(chat_id, "Searching and downloading ringtones... Please wait.")
     
+    # Updated yt-dlp options for safer aria2c usage
     ydl_opts = {
         'format': 'bestaudio/best',
         'outtmpl': f'downloads/{chat_id}_%(title)s.%(ext)s',
@@ -55,7 +63,7 @@ def handle_ringtone_search(message):
             'preferredquality': '256',
         }],
         'external_downloader': 'aria2c',
-        'external_downloader_args': ['-x', '16', '-k', '1M'],
+        'external_downloader_args': ['-x', '4', '-s', '4', '-k', '1M'], 
         'noplaylist': True,
         'quiet': True,
         'extract_audio': True
@@ -81,6 +89,8 @@ def handle_ringtone_search(message):
         bot.send_message(chat_id, "Enjoy your ringtones!")
             
     except Exception as e:
+        # This will print the EXACT error inside Render Logs
+        print(f"CRITICAL ERROR FOR CHAT {chat_id}: {e}")
         bot.send_message(chat_id, "An error occurred while processing your request.")
         
         error_files = glob.glob(f'downloads/{chat_id}_*')
