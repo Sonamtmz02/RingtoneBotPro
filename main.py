@@ -51,22 +51,24 @@ def handle_ringtone_search(message):
     query = message.text
     chat_id = message.chat.id
     
-    bot.send_message(chat_id, "Searching and downloading ringtones... Please wait.")
+    bot.send_message(chat_id, "Searching... Please wait ⏳")
     
-    # Updated yt-dlp options for safer aria2c usage
+    # ULTIMATE SAFE SETTINGS FOR RENDER & YOUTUBE
     ydl_opts = {
         'format': 'bestaudio/best',
-        'outtmpl': f'downloads/{chat_id}_%(title)s.%(ext)s',
+        # Removed Title from name, using ID to prevent special character crashes
+        'outtmpl': f'downloads/{chat_id}_%(id)s.%(ext)s', 
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
             'preferredquality': '256',
         }],
-        'external_downloader': 'aria2c',
-        'external_downloader_args': ['-x', '4', '-s', '4', '-k', '1M'], 
+        # REMOVED ARIA2C - This was the villain causing YouTube to block us!
         'noplaylist': True,
         'quiet': True,
-        'extract_audio': True
+        'extract_audio': True,
+        'ignoreerrors': True, # If 1 video fails, it won't crash the bot, it will move to next
+        'max_downloads': 3 # Strictly limit to 3 to avoid timeouts
     }
     
     search_query = f"ytsearch3:{query} ringtone short"
@@ -78,7 +80,7 @@ def handle_ringtone_search(message):
         downloaded_files = glob.glob(f'downloads/{chat_id}_*.mp3')
         
         if not downloaded_files:
-            bot.send_message(chat_id, "Sorry, I couldn't find any ringtones for that search.")
+            bot.send_message(chat_id, "Sorry, I couldn't find good ringtones for this. Please try a different name.")
             return
 
         for file_path in downloaded_files:
@@ -86,13 +88,13 @@ def handle_ringtone_search(message):
                 bot.send_audio(chat_id, audio)
             os.remove(file_path) 
             
-        bot.send_message(chat_id, "Enjoy your ringtones!")
+        bot.send_message(chat_id, "✅ Enjoy your ringtones!")
             
     except Exception as e:
-        # This will print the EXACT error inside Render Logs
         print(f"CRITICAL ERROR FOR CHAT {chat_id}: {e}")
-        bot.send_message(chat_id, "An error occurred while processing your request.")
+        bot.send_message(chat_id, "An error occurred. YouTube might be blocking the request. Try again in a minute.")
         
+        # Cleanup broken files
         error_files = glob.glob(f'downloads/{chat_id}_*')
         for file in error_files:
             try:
