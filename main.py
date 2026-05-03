@@ -1,184 +1,183 @@
 import os
-import asyncio
 import logging
 import tempfile
-import shutil
-import uuid
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
+import yt_dlp
 
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+# Configure logging
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
 logger = logging.getLogger(__name__)
 
-BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"
+# Get Bot Token from Environment Variable
+BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 
-WELCOME_MESSAGE = """
-🎵 Welcome to Ringtone Pro Bot! 🎵
+if not BOT_TOKEN:
+    raise ValueError("No TELEGRAM_BOT_TOKEN provided. Please set it in your environment variables.")
 
-I am your personal high-speed ringtone provider. Just send me the name of any song, movie BGM, or artist, and I will instantly fetch the Top 3 best quality MP3 ringtones for you.
+def get_youtube_audio_url(query):
+    """
+    Searches YouTube for the query and returns the top 3 video URLs.
+    """
+    ydl_opts = {
+        'quiet': True,
+        'extract_flat': True,
+        'force_generic_extractor': False,
+        'default_search': 'ytsearch3' # Search top 3 results
+    }
+    
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            result = ydl.extract_info(f"ytsearch3:{query}", download=False)
+            if result and 'entries' in result:
+                entries = result['entries']
+                urls = []
+                for entry in entries:
+                    if entry:
+                        urls.append(entry['url'])
+                return urls
+            else:
+                return []
+    except Exception as e:
+        logger.error(f"Error searching YouTube: {e}")
+        return []
 
-⚡ Features:
-• High-Quality MP3 Audio
-• Super-fast processing
-• Direct Telegram Files (No ads or links)
+async def download_and_send_audio(update: Update, context: ContextTypes.DEFAULT_TYPE, video_url: str, title: str):
+    """
+    Downloads audio from YouTube URL and sends it to the user.    """
+    chat_id = update.effective_chat.id
+    
+    # Send a temporary message indicating processing
+    status_msg = await context.bot.send_message(chat_id=chat_id, text=f"⬇️ Downloading: {title}...")
 
-💡 Need assistance? Click /help
-"""
+    # Define yt-dlp options for audio extraction
+    ydl_opts = {
+        'format': 'bestaudio/best',
+        'postprocessors': [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '192',
+        }],
+        'outtmpl': '%(title)s.%(ext)s',
+        'quiet': True,
+        'no_warnings': True,
+    }
 
-HELP_MESSAGE = """
-🛠️ Ringtone Pro Bot Help Center 🛠️
+    temp_dir = tempfile.mkdtemp()
+    original_cwd = os.getcwd()
+    os.chdir(temp_dir)
 
-How to use me?
-1. Do not send YouTube links. Just type the name of the song.
-2. Add words like 'BGM', 'instrumental', or 'flute' for better results.
-   👉 Example: KGF emotional bgm
-   👉 Example: Arijit Singh sad ringtone
-
-Why didn't I get my ringtone?
-• Sometimes YouTube blocks requests. Just wait 1 minute and try again.
-• Check if the spelling is correct.
-
-Is this bot free?
-• Yes! 100% Free and NO ADS. Enjoy downloading!
-"""
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(video_url, download=True)
+            filename = ydl.prepare_filename(info)
+            # yt-dlp changes extension to mp3 after post-processing
+            mp3_filename = filename.rsplit('.', 1)[0] + '.mp3'
+            
+            if os.path.exists(mp3_filename):
+                # Send the audio file
+                with open(mp3_filename, 'rb') as audio_file:
+                    await context.bot.send_audio(
+                        chat_id=chat_id,
+                        audio=audio_file,
+                        title=title,
+                        caption=f"🎵 {title}\n\n✅ Downloaded via Ringtone Pro Bot"
+                    )
+            else:
+                await context.bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=status_msg.message_id,
+                    text="❌ Failed to generate MP3 file."
+                )
+                
+    except Exception as e:
+        logger.error(f"Error downloading audio: {e}")
+        await context.bot.edit_message_text(
+            chat_id=chat_id,            message_id=status_msg.message_id,
+            text=f"❌ Error: Could not download this ringtone. Try another one."
+        )
+    finally:
+        # Cleanup
+        os.chdir(original_cwd)
+        # Remove temp directory and files
+        import shutil
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        # Delete the status message
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=status_msg.message_id)
+        except:
+            pass
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(WELCOME_MESSAGE)
+    welcome_text = (
+        "🎵 Welcome to Ringtone Pro Bot! 🎵\n\n"
+        "I am your personal high-speed ringtone provider. Just send me the name of any song, movie BGM, or artist, and I will instantly fetch the Top 3 best quality MP3 ringtones for you.\n\n"
+        "⚡ Features:\n"
+        "• High-Quality MP3 Audio\n"
+        "• Super-fast processing\n"
+        "• Direct Telegram Files (No ads or links)\n\n"
+        "💡 Need assistance? Click /help"
+    )
+    await update.message.reply_text(welcome_text)
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(HELP_MESSAGE)
+    help_text = (
+        "🛠️ Ringtone Pro Bot Help Center 🛠️\n\n"
+        "How to use me?\n"
+        "1. Do not send YouTube links. Just type the name of the song.\n"
+        "2. Add words like 'BGM', 'instrumental', or 'flute' for better results.\n"
+        "   👉 Example: KGF emotional bgm\n"
+        "   👉 Example: Arijit Singh sad ringtone\n\n"
+        "Why didn't I get my ringtone?\n"
+        "• Sometimes YouTube blocks requests. Just wait 1 minute and try again.\n"
+        "• Check if the spelling is correct.\n\n"
+        "Is this bot free?\n"
+        "• Yes! 100% Free and NO ADS. Enjoy downloading!"
+    )
+    await update.message.reply_text(help_text)
 
-async def search_and_send_ringtones(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_query = update.message.text.strip()
     
     if not user_query:
-        await update.message.reply_text("Please send a song name or ringtone name to search.")
         return
-    
-    status_message = await update.message.reply_text(f"🔍 Searching for: {user_query}\n⏳ Please wait...")
-    
-    search_query = f"ytsearch3:{user_query} ringtone audio"
-    
-    temp_dir = tempfile.mkdtemp()
-    downloaded_files = []
-    
-    try:
-        ydl_opts = {
-            'format': 'bestaudio/best',
-            'postprocessors': [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'mp3',
-                'preferredquality': '256',
-            }],
-            'outtmpl': os.path.join(temp_dir, '%(title).100s.%(ext)s'),
-            'quiet': True,
-            'no_warnings': True,
-            'extract_flat': False,
-            'download_archive': None,
-            'ignoreerrors': True,
-            'no_color': True,
-            'external_downloader': 'aria2c',
-            'external_downloader_args': ['-x', '16', '-s', '16', '-k', '1M'],
-            'socket_timeout': 30,
-            'retries': 5,
-            'fragment_retries': 5,
-            'extractor_retries': 5,
-        }
-        
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            await status_message.edit_text(f"🔍 Searching: {user_query}\n⬇️ Downloading audio files...")
-            
-            info = ydl.extract_info(search_query, download=True)
-            
-            if info and 'entries' in info:
-                for entry in info['entries']:
-                    if entry is None:
-                        continue
-                    
-                    video_title = entry.get('title', 'Unknown')
-                    video_id = entry.get('id', str(uuid.uuid4())[:8])
-                    
-                    mp3_filename = None
-                    for file in os.listdir(temp_dir):
-                        if file.endswith('.mp3'):
-                            file_path = os.path.join(temp_dir, file)
-                            if os.path.getsize(file_path) > 0:
-                                mp3_filename = file_path
-                                break
-                    
-                    if mp3_filename:
-                        new_filename = os.path.join(temp_dir, f"{video_title[:80]}.mp3")
-                        if mp3_filename != new_filename:
-                            shutil.move(mp3_filename, new_filename)
-                        downloaded_files.append((new_filename, video_title))
-            else:
-                await status_message.edit_text("❌ No results found. Please try a different search term.\n\nTip: Add words like 'ringtone', 'bgm', or 'instrumental' for better results.")
-                return
-        
-        if not downloaded_files:
-            await status_message.edit_text("❌ Failed to download audio. Please try again later or use a different search term.")
-            return
-        
-        await status_message.edit_text(f"📤 Sending {len(downloaded_files)} ringtones...")
-        
-        for idx, (file_path, title) in enumerate(downloaded_files, 1):
-            try:
-                file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
-                
-                if file_size_mb > 50:
-                    await update.message.reply_text(f"⚠️ {title}\nFile too large ({file_size_mb:.1f}MB), skipping...")
-                    continue
-                
-                await status_message.edit_text(f"📤 Sending ringtone {idx}/{len(downloaded_files)}: {title[:50]}...")
-                
-                with open(file_path, 'rb') as audio_file:
-                    await update.message.reply_audio(
-                        audio=audio_file,
-                        title=title[:100],
-                        performer="Ringtone Pro Bot",
-                        caption=f"🎵 {title}\n\nDownloaded via @RingtoneProBot"
-                    )
-                
-                await asyncio.sleep(0.5)
-                
-            except Exception as e:
-                logger.error(f"Error sending file {title}: {e}")
-                await update.message.reply_text(f"⚠️ Failed to send: {title}")
-        
-        await status_message.delete()
-        
-    except Exception as e:
-        logger.error(f"Main error: {e}")
-        await status_message.edit_text(f"❌ An error occurred. Please try again later.\n\nError: {str(e)[:100]}")
-    
-    finally:
-        if os.path.exists(temp_dir):
-            shutil.rmtree(temp_dir, ignore_errors=True)
 
-async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger.error(f"Update {update} caused error {context.error}")
-    try:
-        if update and update.effective_message:
-            await update.effective_message.reply_text("❌ An unexpected error occurred. Please try again.")
-    except:
-        pass
+    await update.message.reply_text("🔍 Searching for best ringtones...")
+    # Search YouTube for top 3 results
+    video_urls = get_youtube_audio_url(user_query)
+
+    if not video_urls:
+        await update.message.reply_text("❌ No results found. Please try a different keyword.")
+        return
+
+    # Process each of the top 3 results
+    for i, url in enumerate(video_urls):
+        try:
+            # Extract basic info for title
+            ydl_opts = {'quiet': True, 'extract_flat': False}
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                title = info.get('title', f'Ringtone {i+1}')
+                
+            # Download and send
+            await download_and_send_audio(update, context, url, title)
+            
+        except Exception as e:
+            logger.error(f"Failed to process result {i+1}: {e}")
+            continue
 
 def main():
-    if BOT_TOKEN == "YOUR_BOT_TOKEN_HERE":
-        print("ERROR: Please replace YOUR_BOT_TOKEN_HERE with your actual bot token!")
-        return
-    
-    application = Application.builder().token(BOT_TOKEN).build()
-    
+    application = ApplicationBuilder().token(BOT_TOKEN).build()
+
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_and_send_ringtones))
-    
-    application.add_error_handler(error_handler)
-    
-    print("✅ Ringtone Pro Bot is running...")
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-if __name__ == "__main__":
-    import yt_dlp
+    logger.info("Bot is starting...")
+    application.run_polling()
+
+if __name__ == '__main__':
     main()
