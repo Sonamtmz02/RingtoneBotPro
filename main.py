@@ -1,187 +1,143 @@
 import os
-import asyncio
 import logging
+import asyncio
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 import yt_dlp
+import uuid
 
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-BOT_TOKEN = "7768342919:AAGVPWmaBsJHBQvSDrd4MY7LVx5eTKemF10"
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "Ringtone Pro Bot Me Aapka Swagat Hai!\n\n"
-        "Kisi Bhi Ringtone Ka Naam Bhejo, Main YouTube Se 3 Ringtone Dhundh Kar Bhej Dunga.\n\n"
-        "Example: Teri Baaton Mein Aisa Uljha Jiya Ringtone"
-    )
+    await update.message.reply_text("Welcome to Ringtone Pro Bot!\nSend me ringtone name to search and download.")
 
-async def search_and_send_ringtones(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def search_ringtone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.message.text
-    status_msg = await update.message.reply_text("Ringtone Search Kar Raha Hu, Thodi Der Wait Karo...")
+    if not query or len(query.strip()) == 0:
+        await update.message.reply_text("Please send a ringtone name.")
+        return
+    
+    search_msg = await update.message.reply_text(f"Searching YouTube for: {query}")
+    
+    search_query = f"{query} ringtone"
+    ydl_opts = {
+        'quiet': True,
+        'no_warnings': True,
+        'extract_flat': True,
+        'force_generic_extractor': False,
+    }
     
     try:
-        search_query = f"{query} ringtone"
-        
-        ydl_opts = {
-            'format': 'bestaudio/best',
-            'quiet': True,
-            'no_warnings': True,
-            'extract_flat': False,
-            'force_generic_extractor': False,
-            'default_search': 'ytsearch3',
-            'source_address': '0.0.0.0',
-            'postprocessors': [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'mp3',
-                'preferredquality': '192',
-            }],
-            'outtmpl': '%(title)s.%(ext)s',
-            'noplaylist': True,
-            'ignoreerrors': True,
-            'no_color': True,
-            'geo_bypass': True,
-            'socket_timeout': 30,
-            'retries': 3,
-            'fragment_retries': 3,
-            'extractor_args': {
-                'youtube': {
-                    'skip': ['dash', 'hls'],
-                    'player_skip': ['js', 'configs', 'webpage']
-                }
-            }
-        }
-        
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            await status_msg.edit_text("YouTube Se Ringtone Download Ho Rahi Hai...")
+            search_url = f"ytsearch5:{search_query}"
+            info = ydl.extract_info(search_url, download=False)
+            entries = info.get('entries', [])
+        
+        ringtone_videos = []
+        seen_ids = set()
+        
+        for entry in entries:
+            if entry and entry.get('id') not in seen_ids:
+                duration = entry.get('duration', 0) or 0
+                if duration <= 120:
+                    ringtone_videos.append(entry)
+                    seen_ids.add(entry['id'])
+        
+        if len(ringtone_videos) < 3:
+            for entry in entries:
+                if entry and entry.get('id') not in seen_ids:
+                    ringtone_videos.append(entry)
+                    seen_ids.add(entry['id'])
+                    if len(ringtone_videos) >= 3:
+                        break
+        
+        if len(ringtone_videos) == 0:
+            await search_msg.edit_text("No ringtone found. Try different name.")
+            return
+        
+        await search_msg.edit_text(f"Found {min(3, len(ringtone_videos))} ringtones. Downloading...")
+        
+        sent_count = 0
+        for idx, video in enumerate(ringtone_videos[:3]):
+            if sent_count >= 3:
+                break
             
-            info = ydl.extract_info(f"ytsearch3:{search_query}", download=False)
+            video_url = f"https://www.youtube.com/watch?v={video['id']}"
+            video_title = video.get('title', f'Ringtone_{idx+1}')
             
-            if not info or 'entries' not in info or len(info['entries']) == 0:
-                await status_msg.edit_text("Koi Ringtone Nahi Mili. Kuch Aur Search Karo.")
-                return
+            status_msg = await update.message.reply_text(f"Downloading {idx+1}/3: {video_title[:50]}...")
             
-            entries = [entry for entry in info['entries'] if entry]
+            file_path = await download_audio(video_url)
             
-            if len(entries) == 0:
-                await status_msg.edit_text("Koi Ringtone Nahi Mili. Kuch Aur Search Karo.")
-                return
-            
-            await status_msg.edit_text(f"{len(entries)} Ringtone Mili, Ab Download Shuru Karta Hu...")
-            
-            sent_count = 0
-            downloaded_files = []
-            
-            for i, entry in enumerate(entries[:3], 1):
-                try:
-                    video_url = entry['webpage_url']
-                    video_title = entry.get('title', 'Unknown Title')
-                    duration = entry.get('duration', 0)
-                    
-                    if duration > 120:
-                        await update.message.reply_text(f"❌ {i}. {video_title}\nBahut Lamba Video Hai (2 Minute Se Jyada). Skip Kar Raha Hu.")
-                        continue
-                    
-                    temp_status = await update.message.reply_text(f"Downloading {i}/3: {video_title[:50]}...")
-                    
-                    safe_title = "".join(c for c in video_title if c.isalnum() or c in (' ', '-', '_')).rstrip()
-                    safe_title = safe_title[:50]
-                    output_file = f"{safe_title}.mp3"
-                    
-                    download_opts = {
-                        'format': 'bestaudio/best',
-                        'quiet': True,
-                        'no_warnings': True,
-                        'outtmpl': output_file.replace('.mp3', '.%(ext)s'),
-                        'postprocessors': [{
-                            'key': 'FFmpegExtractAudio',
-                            'preferredcodec': 'mp3',
-                            'preferredquality': '192',
-                        }],
-                        'noplaylist': True,
-                        'extract_flat': False,
-                        'socket_timeout': 30,
-                        'retries': 3,
-                        'fragment_retries': 3,
-                        'geo_bypass': True,
-                        'extractor_args': {
-                            'youtube': {
-                                'skip': ['dash', 'hls'],
-                                'player_skip': ['js', 'configs', 'webpage']
-                            }
-                        }
-                    }
-                    
-                    with yt_dlp.YoutubeDL(download_opts) as downloader:
-                        downloader.download([video_url])
-                    
-                    if os.path.exists(output_file):
-                        file_size = os.path.getsize(output_file)
-                        
-                        if file_size > 50 * 1024 * 1024:
-                            await temp_status.edit_text(f"❌ {i}. {video_title}\nFile Bahut Badi Hai (50MB Se Jyada). Skip Kar Raha Hu.")
-                            os.remove(output_file)
-                            continue
-                        
-                        await temp_status.edit_text(f"Uploading {i}/3: {video_title[:50]}...")
-                        
-                        with open(output_file, 'rb') as audio:
-                            await update.message.reply_audio(
-                                audio=audio,
-                                title=video_title,
-                                performer="Ringtone Pro Bot",
-                                filename=f"{safe_title}.mp3"
-                            )
-                        
-                        sent_count += 1
-                        downloaded_files.append(output_file)
-                        await temp_status.delete()
-                    
-                except yt_dlp.utils.DownloadError as e:
-                    logger.error(f"Download error for {entry.get('title', 'Unknown')}: {str(e)}")
-                    try:
-                        await temp_status.edit_text(f"❌ {i}. Download Failed. Skip Kar Raha Hu.")
-                    except:
-                        pass
-                    continue
-                    
-                except Exception as e:
-                    logger.error(f"Error processing {entry.get('title', 'Unknown')}: {str(e)}")
-                    try:
-                        await temp_status.edit_text(f"❌ {i}. Error Aaya. Skip Kar Raha Hu.")
-                    except:
-                        pass
-                    continue
-            
-            for file_path in downloaded_files:
-                try:
-                    if os.path.exists(file_path):
-                        os.remove(file_path)
-                except:
-                    pass
-            
-            if sent_count > 0:
-                await status_msg.edit_text(f"✅ {sent_count} Ringtone Successfully Send Kar Di!")
+            if file_path:
+                with open(file_path, 'rb') as audio_file:
+                    await update.message.reply_audio(
+                        audio=audio_file,
+                        title=video_title[:64],
+                        performer="Ringtone Pro Bot",
+                        filename=f"{video_title[:30]}.mp3"
+                    )
+                os.remove(file_path)
+                sent_count += 1
+                await status_msg.delete()
             else:
-                await status_msg.edit_text("❌ Koi Ringtone Send Nahi Ho Payi. Dobara Try Karo.")
-                
+                await status_msg.edit_text(f"Failed to download: {video_title[:50]}")
+        
+        if sent_count > 0:
+            await search_msg.delete()
+        else:
+            await search_msg.edit_text("Download failed. Please try again.")
+            
     except Exception as e:
-        logger.error(f"Main error: {str(e)}")
-        await status_msg.edit_text("Kuch Error Aaya. Dobara Try Karo.")
+        logger.error(f"Error: {str(e)}")
+        await search_msg.edit_text("Error occurred. Please try again later.")
+
+async def download_audio(url):
+    download_id = str(uuid.uuid4())[:8]
+    output_path = f"downloads/{download_id}"
+    os.makedirs("downloads", exist_ok=True)
+    
+    ydl_opts = {
+        'format': 'bestaudio/best',
+        'postprocessors': [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '256',
+        }],
+        'outtmpl': f'{output_path}.%(ext)s',
+        'quiet': True,
+        'no_warnings': True,
+        'extract_flat': False,
+        'external_downloader': 'aria2c',
+        'external_downloader_args': ['-x', '16', '-s', '16', '-k', '1M'],
+    }
+    
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([url])
+        
+        mp3_file = f"{output_path}.mp3"
+        if os.path.exists(mp3_file) and os.path.getsize(mp3_file) > 0:
+            return mp3_file
+        return None
+    except Exception as e:
+        logger.error(f"Download error: {str(e)}")
+        return None
 
 def main():
+    if not BOT_TOKEN:
+        logger.error("BOT_TOKEN not found in environment variables!")
+        return
+    
     application = Application.builder().token(BOT_TOKEN).build()
-    
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_and_send_ringtones))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_ringtone))
     
-    print("Bot Started! Bot Ab Ready Hai Ringtone Bhejne Ke Liye...")
-    
+    logger.info("Bot started...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
