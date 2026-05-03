@@ -2,6 +2,28 @@ import telebot
 import yt_dlp
 import os
 import glob
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+# --- DUMMY WEB SERVER TO KEEP RENDER HAPPY ---
+class DummyHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/plain')
+        self.end_headers()
+        self.wfile.write(b"Bot is running smoothly on Render!")
+
+def run_dummy_server():
+    port = int(os.environ.get("PORT", 10000))
+    server_address = ('0.0.0.0', port)
+    httpd = HTTPServer(server_address, DummyHandler)
+    httpd.serve_forever()
+
+# Start the dummy server in a background thread
+server_thread = threading.Thread(target=run_dummy_server)
+server_thread.daemon = True
+server_thread.start()
+# ---------------------------------------------
 
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
 bot = telebot.TeleBot(BOT_TOKEN)
@@ -22,7 +44,7 @@ def handle_ringtone_search(message):
     query = message.text
     chat_id = message.chat.id
     
-    bot.send_message(chat_id, "Searching and downloading top 3 ringtones... Please wait.")
+    bot.send_message(chat_id, "processing... Please wait.")
     
     ydl_opts = {
         'format': 'bestaudio/best',
@@ -69,4 +91,4 @@ def handle_ringtone_search(message):
                 pass
 
 if __name__ == "__main__":
-    bot.polling(none_stop=True)
+    bot.polling(none_stop=True, timeout=60, long_polling_timeout=60)
